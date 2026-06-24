@@ -71,6 +71,20 @@ Cambios v5.5 (auditoría DAT vs HTML — correcciones de integridad de datos):
     - [Windows] Escritura segura (_safe_write): reintentos atómicos ante
       bloqueo de archivo (PermissionError/WinError 32) sin fallo silencioso.
       --solo-sql ya no exige privilegios de administrador.
+
+Cambios v5.6 (cambio de política de traducciones):
+    - [POLÍTICA] NO se omite NINGUNA traducción. Se MANTIENEN todos los textos
+      y datos tal cual, INCLUSO si están en inglés (fallback de Booking en una
+      ficha sin traducción para ese idioma). SKIP_ENGLISH_FALLBACK_TRANSLATIONS
+      pasa a False por defecto; la detección de fallback se conserva sólo a
+      título INFORMATIVO (cuenta, no descarta).
+
+Cambios v5.7 (política: texto TAL CUAL, no se elimina nada):
+    - [POLÍTICA] El texto se guarda y se vuelca al SQL EXACTAMENTE como se
+      extrae. NO se elimina NADA: ni "OpenStreetMap" u otra contaminación de
+      interfaz/atribución, ni medios/URLs, ni saltos de línea. clean_text_for_sql
+      es PASS-THROUGH (CLEAN_TEXT_BEFORE_SQL=False). Sólo se aplica el escapado
+      SQL obligatorio (sql_escape), que inserta el texto literal sin alterarlo.
 """
 
 import os
@@ -109,14 +123,15 @@ SQL_ONLY = any(a in ("--solo-sql", "--sql-only") for a in sys.argv[1:])
 # script, por lo que estos idiomas se tratan igual que los latinos.
 # validate_language_config() verifica en arranque que todos tengan plantilla
 # de URL en `lenguajes`.
-_LENGUAJES_BASE_20 = ["en","es","fr","de","pt","ar","nl","zh","tl","id","ms","ja","ko","th","hu","pl","no","fi","sv","da"]
-# "it" se añade al final como incorporación posterior (20 base + it = 21).
-lenguajes_activos = _LENGUAJES_BASE_20 + ["it"]
+
+lenguajes_activos =  ["en","es","fr","it","de","pt","ar","nl","zh","tl","id","ms","ja","ko","th","hu","pl","no","fi","sv","da"]
 
 # Idiomas que se incluyen al ARMAR el SQL (PASO 3). Si está vacío o es None, o
 # si es igual a lenguajes_activos, se usan por defecto los de lenguajes_activos.
 # Permite generar SQL solo con un subconjunto preseleccionado de idiomas.
-lenguajes_activos_SQL = []   # p.ej. ["en","es","de"]; []/None => usa lenguajes_activos
+# p.ej. ["en","es","de"]; []/None => usa lenguajes_activos
+
+lenguajes_activos_SQL = []   
 
 def get_sql_languages():
     """Idiomas efectivos para el PASO 3 (SQL): subconjunto preseleccionado o,
@@ -136,10 +151,20 @@ def db_locale(lang):
     """Devuelve el locale de BD para un código de idioma (identidad si no hay mapeo)."""
     return LOCALE_MAP.get(lang, lang)
 
-# PASO 3: si la descripción de un idioma NO-inglés es idéntica a la inglesa,
-# Booking sirvió el INGLÉS como fallback (no hay traducción real). En ese caso
-# NO se escribe inglés como "traducción" en accommodation_translations.
-SKIP_ENGLISH_FALLBACK_TRANSLATIONS = True
+# PASO 3 — POLÍTICA DE TRADUCCIONES:
+# Se MANTIENEN TODAS las traducciones/textos tal cual vienen del DAT, INCLUSO si
+# Booking sirvió el INGLÉS como fallback (idioma sin traducción real). NINGUNA
+# traducción se omite. La detección de fallback se conserva sólo a título
+# INFORMATIVO (cuenta cuántas coinciden con el inglés), sin descartarlas.
+#   - False (por defecto): NO se omite ninguna traducción (requisito vigente).
+#   - True: omitiría las que son fallback en inglés (NO recomendado aquí).
+SKIP_ENGLISH_FALLBACK_TRANSLATIONS = False
+
+# POLÍTICA DE TEXTO (vigente): el texto se guarda y se usa EXACTAMENTE como se
+# extrae. NO se elimina nada: ni contaminación de interfaz/atribución
+# ("OpenStreetMap"), ni medios/URLs, ni saltos de línea. clean_text_for_sql es
+# PASS-THROUGH. Poner en True sólo si se desea reactivar la limpieza opcional.
+CLEAN_TEXT_BEFORE_SQL = False
 
 # Preservación del DAT: al re-ejecutar SIN nueva adquisición (HTML omitido o
 # extracción vacía), NO se pisa el DAT existente con registros vacíos.
@@ -476,21 +501,26 @@ def _is_contaminated_line(line):
 
 def clean_text_for_sql(text):
     """
-    PASO 2.5 — Limpieza de texto contaminado, aplicada al CRUDO del DAT antes del
-    SQL. Orden: <br /> heredado -> líneas -> quita medios/URLs -> quita
-    contaminación de interfaz por línea -> SIN formato (una sola línea).
-    Robusto ante DAT nuevos (crudo) y antiguos (con <br />).
+    PASO 2.5 — Por POLÍTICA vigente, el texto se usa TAL CUAL se extrae: NO se
+    elimina NADA (ni contaminación tipo "OpenStreetMap", ni medios/URLs, ni
+    saltos de línea). Esta función es PASS-THROUGH por defecto
+    (CLEAN_TEXT_BEFORE_SQL=False). El único tratamiento posterior es el escapado
+    SQL obligatorio (sql_escape), que NO altera el contenido: inserta el texto
+    literal exactamente como está en el DAT.
+
+    Si en el futuro se quisiera limpiar, basta poner CLEAN_TEXT_BEFORE_SQL=True
+    y se aplicaría la limpieza opcional (líneas contaminadas, medios/URLs,
+    normalización sin formato).
     """
     if not text:
         return ""
-    # 1) Normaliza <br /> heredados a saltos para poder trabajar por líneas.
+    if not CLEAN_TEXT_BEFORE_SQL:
+        return text   # TAL CUAL: no se elimina nada
+    # --- Limpieza OPCIONAL (desactivada por defecto) ---
     work = _BR_RE.sub('\n', text)
-    # 2) Procesa por líneas: descarta las contaminadas.
     kept = [ln for ln in re.split(r'(?:\r\n|\r|\n)', work) if not _is_contaminated_line(ln)]
     cleaned = "\n".join(kept)
-    # 3) Excluye imágenes, enlaces de imagen y URLs externas (regla original).
     cleaned = strip_media_and_links(cleaned)
-    # 4) SIN formato: colapsa saltos y espacios a una sola línea.
     cleaned = strip_all_formatting(cleaned)
     return cleaned
 
@@ -1001,6 +1031,7 @@ def generate_sql_updates(dat_structures):
     sql_langs = get_sql_languages()
     sql_lines = ["START TRANSACTION;"]
     omitidos_fallback = 0
+    fallback_en = 0
 
     for dat in dat_structures:
         hotel_id = dat.get("id", "")
@@ -1039,13 +1070,15 @@ def generate_sql_updates(dat_structures):
             desc = clean_text_for_sql(hotels.get(lang, {}).get("hotel_description", ""))
             if not desc:
                 continue
-            # Finding 1: si la descripción NO-inglesa es idéntica a la inglesa,
-            # es un FALLBACK de Booking (no hay traducción): no se escribe inglés
-            # como traducción en accommodation_translations.
-            if (SKIP_ENGLISH_FALLBACK_TRANSLATIONS and lang != "en"
-                    and en_desc_clean and desc == en_desc_clean):
-                omitidos_fallback += 1
-                continue
+            # Detección de fallback en inglés (SÓLO informativa por defecto).
+            # POLÍTICA: NO se omite ninguna traducción; se MANTIENEN todos los
+            # textos, incluso si están en inglés (fallback de Booking).
+            es_fallback = (lang != "en" and en_desc_clean and desc == en_desc_clean)
+            if es_fallback:
+                fallback_en += 1
+                if SKIP_ENGLISH_FALLBACK_TRANSLATIONS:
+                    omitidos_fallback += 1
+                    continue
             sql_lines.append(
                 f"UPDATE {TRANSLATIONS_TABLE} t SET t.content = '{sql_escape(desc)}' "
                 f"WHERE t.foreign_key = {hotel_id} "
@@ -1055,8 +1088,10 @@ def generate_sql_updates(dat_structures):
 
     sql_lines.append("COMMIT;")
 
-    if omitidos_fallback:
+    if SKIP_ENGLISH_FALLBACK_TRANSLATIONS and omitidos_fallback:
         print(f"[SQL] Traducciones OMITIDAS por ser fallback en inglés: {omitidos_fallback}")
+    elif fallback_en:
+        print(f"[SQL] Traducciones en inglés (fallback) MANTENIDAS (no se omite ninguna): {fallback_en}")
 
     _sql_file_counter += 1
     stamp = datetime.now(timezone.utc).strftime("%m%d")
