@@ -1,0 +1,4 @@
+<!DOCTYPE html><html lang="ar" prefix="og: http://ogp.me/ns# fb: http://ogp.me/ns/fb# booking_com: http://ogp.me/ns/fb/booking_com#" xmlns:og="http://opengraphprotocol.org/schema/" class=" b_bot b_bot supports_fontface supports_hyphens  hasJS" dir="rtl"><head profile="http://a9.com/-/spec/opensearch/1.1/">
+<script async="" type="text/plain" src="https://www.googletagmanager.com/gtm.js?id=GTM-5Q664QZ" class="optanon-category-C0002-C0004 "></script><script type="text/javascript" nonce="" src="https://cdn.cookielaw.org/consent/3ea94870-d4b1-483a-b1d2-faf1d982bb31/OtAutoBlock.js"></script>
+<script type="text/javascript" nonce="">
+(function () {
